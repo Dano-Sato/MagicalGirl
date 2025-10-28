@@ -1,0 +1,43 @@
+##스크립트(.scr 파일) 작성 방법에 대해서##
+
+대화문 작성은 (사람): (말하는 내용) 의 형식으로 쓰면 됩니다.
+ex) A: 나는 어쩌구 저쩌구야. 어쩌구 저쩌구고 어쩌구 저쩌구
+네임을 지정하지 않으면 이름표가 출력되지 않습니다.
+ex) (나는 A를 보고 이상하다고 생각했다.)
+
+태그(#) 인스트럭션
+문장의 시작이 #일 경우 스크립트 재생이 아닌 다른 인스트럭션이 실행이 됩니다.
+ex) #bgm piano_calm.mp3 volume=0.5
+위 지시문은 배경음악으로 piano_calm.mp3를 50%의 볼륨으로 재생합니다.
+
+#bgm: 배경음악 재생
+#bg: 배경 그림 변경
+#chara1: 캐릭터 1에 대한 지시문 (#chara2, #chara3 태그도 존재. 최대 3명입니다.)
+
+아래는 예시입니다.
+ex) #bg testBg.jpg (배경 그림을 testBg.jpg로 변경합니다.)
+
+ex) #chara1 schoolGirl1_default.png pos=RPoint(500,80) scale=0.5 emotion=joyful
+(캐릭터1을 선언하고 감정표현을 재생합니다.)
+
+
+캐릭터 관련 파라미터
+
+pos ex) pos=RPoint(0,50)
+캐릭터 이미지의 위치를 지정합니다.
+
+scale ex) scale=0.5
+캐릭터 이미지의 크기를 지정합니다.
+
+emotion ex) emotion=joyful
+캐릭터의 감정표현 애니메이션을 지정합니다
+현재 지원되는 감정표현
+awkward, depressed, love, excited, joyful, angry, surprised, curious, sad, idea, ok, zzz, no
+정확한 확인을 위해서는 scriptRenderer 클래스의 emotions를 참고하면 됩니다.
+
+
+jump ex) jump=20 (jump만 입력해도 가능)
+캐릭터가 점프합니다.
+
+move ex) move=50
+캐릭터가 수평으로 이동합니다.

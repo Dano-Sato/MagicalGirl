@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "name": "하나",
+    "rarity": "3",
+    "lv": 5,
+    "xp": 0,
+    "Force": 12,
+    "Wisdom": 11,
+    "Charm": 14,
+    "Spirit": 9,
+    "fatigue": 10,
+    "morale": 95
+  },
+  {
+    "id": 2,
+    "name": "유이",
+    "rarity": "4",
+    "lv": 8,
+    "xp": 0,
+    "Force": 15,
+    "Wisdom": 16,
+    "Charm": 12,
+    "Spirit": 13,
+    "fatigue": 22,
+    "morale": 88
+  },
+  {
+    "id": 3,
+    "name": "미나",
+    "rarity": "2",
+    "lv": 3,
+    "xp": 0,
+    "Force": 9,
+    "Wisdom": 10,
+    "Charm": 11,
+    "Spirit": 10,
+    "fatigue": 5,
+    "morale": 100
+  }
+]
+

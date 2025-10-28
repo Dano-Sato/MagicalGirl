@@ -1,4 +1,6 @@
 from REMOLib import *
+from dataclasses import dataclass
+import pygame
 
 
 
@@ -29,14 +31,51 @@ class Girl:
 class Obj:
     None
 
+# Demo data: 게임 시작 시 표시할 샘플 마법소녀 목록
+GIRLS: list[Girl] = [
+    Girl(id=1, name="하나", rarity="3", lv=5, Force=12, Wisdom=11, Charm=14, Spirit=9, fatigue=10, morale=95),
+    Girl(id=2, name="유이", rarity="4", lv=8, Force=15, Wisdom=16, Charm=12, Spirit=13, fatigue=22, morale=88),
+    Girl(id=3, name="미나", rarity="2", lv=3, Force=9, Wisdom=10, Charm=11, Spirit=10, fatigue=5, morale=100),
+]
+
+class GirlListScene(Scene):
+    def initOnce(self):
+        self.title = textObj("마법소녀 일람", pos=(80, 60), size=36, color=Cs.yellow)
+        self.items = []
+        return
+    def init(self):
+        self.items.clear()
+        x, y = 100, 120
+        line_h = 32
+        for g in GIRLS:
+            line = f"[{g.id:03}] {g.name}  (★{g.rarity})  LV {g.lv}  F:{g.Force} W:{g.Wisdom} C:{g.Charm} S:{g.Spirit}  피로:{g.fatigue} 사기:{g.morale}"
+            self.items.append(textObj(line, pos=(x, y), size=24, color=Cs.white))
+            y += line_h
+        return
+    def update(self):
+        if Rs.userJustPressed(pygame.K_ESCAPE) or Rs.userJustPressed(pygame.K_BACKSPACE):
+            Rs.setCurrentScene(Scenes.mainScene)
+        return
+    def draw(self):
+        self.title.draw()
+        for t in self.items:
+            t.draw()
+        return
+
 class mainScene(Scene):
     def initOnce(self):
         return
     def init(self):
         return
     def update(self):
+        if Rs.userJustPressed(pygame.K_g):
+            Rs.setCurrentScene(Scenes.girlList)
         return
     def draw(self):
+        hint1 = textObj("G: 마법소녀 일람 열기", pos=(80, 80), size=28, color=Cs.white)
+        hint2 = textObj("ESC/BACK: 돌아가기", pos=(80, 116), size=20, color=Cs.gray)
+        hint1.draw()
+        hint2.draw()
         return
 
 
@@ -52,6 +91,7 @@ class defaultScene(Scene):
 
 class Scenes:
     mainScene = mainScene()
+    girlList = GirlListScene()
 
 
 if __name__=="__main__":

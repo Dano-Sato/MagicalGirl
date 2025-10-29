@@ -2299,20 +2299,34 @@ class longTextObj(layoutObj,localizable):
         self._updateTextObj(self.pos,self.text,self.font,self.size,self.color,self.textWidth)
 
     def _updateTextObj(self,pos,text, font, size, color,textWidth):    
-        stringParts = longTextObj._cutString(Rs.getFont(font),size,text,textWidth)
-        if stringParts[-1]=="":
+          # 1) 기존 부모 정보 백업
+        old_parent = getattr(self, "parent", None)
+        old_depth = getattr(self, "_depth", 0)
+        old_index = None
+        if old_parent is not None:
+            try:
+                old_index = old_parent.childs[old_depth].index(self)
+            except ValueError:
+                old_index = None
+
+        # 2) 텍스트 라인 다시 만들기
+        stringParts = longTextObj._cutString(Rs.getFont(font), size, text, textWidth)
+        if stringParts and stringParts[-1] == "":
             stringParts.pop()
-        ObjList = []
+        ObjList = [textObj(s, font=font, size=size, color=color) for s in stringParts]
         _alpha = self.alpha
-        for str in stringParts:
-            t = textObj(str,font=font,size=size,color=color)
-            ObjList.append(t)
         if isinstance(pos, tuple):
             pos = RPoint(*pos)
-        super().__init__(pos=pos,childs=ObjList,spacing=size/4)
-        self.alpha = _alpha
-        self._clearGraphicCache()
 
+        # 3) 재초기화
+        super().__init__(pos=pos, childs=ObjList, spacing=size/4)
+        self.alpha = _alpha
+
+        # 4) 원래 부모로 재부착
+        if old_parent is not None:
+            self.setParent(old_parent, depth=old_depth, index=old_index)
+
+        self._clearGraphicCache()
     #현재 textWidth에 의해 나눠질 text 집합을 불러온다.
     def getStringList(self,text):
         return longTextObj._cutString(Rs.getFont(self.font),self.size,text,self.textWidth)

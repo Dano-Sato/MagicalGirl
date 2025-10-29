@@ -1,0 +1,58 @@
+
+
+class MissionObj(rectObj):
+    def __init__(self,mission: Mission):
+        self.mission = mission
+        rectObj.__init__(self,rect=pygame.Rect(0,0,800,100))
+        self.color = (255,255,255)
+        self.text = textObj(mission.name,pos=(0,0),font="korean_button.ttf",size=20,color=(0,0,0))
+        self.text.setParent(self)
+        self.text.center = self.offsetRect.center
+
+class mainScene(Scene):
+    def initOnce(self):
+        self.state = GameState(recruit_sample_roster())
+        self.director = MissionDirector(random.Random(1337))
+        self.controller = GameController(self.state, self.director)
+
+        self.controller.start_round()
+
+        self.missionLayout = layoutObj(pos=(100,100),spacing=10,childs=[],isVertical=True)
+
+        for mission in self.state.pending_missions:
+            self.missionObj = MissionObj(mission)
+            self.missionObj.setParent(self.missionLayout)
+
+        return
+    def init(self):
+        return
+    def update(self):
+        self.missionLayout.update()
+        return
+    def draw(self):
+        self.missionLayout.draw()
+        return
+
+
+class defaultScene(Scene):
+    def initOnce(self):
+        return
+    def init(self):
+        return
+    def update(self):
+        return
+    def draw(self):
+        return
+
+class Scenes:
+    mainScene = mainScene()
+
+
+if __name__=="__main__":
+    # Quick smoke test of the backend logic when run directly.
+    demo_round(rounds=2)
+
+    #Screen Setting
+    window = REMOGame(window_resolution=(1920,1080),screen_size=(2560,1440),fullscreen=False,caption="DEFAULT")
+    window.setCurrentScene(Scenes.mainScene)
+    window.run()

@@ -21,6 +21,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import pygame
+
 from REMOLib import *
 
 
@@ -548,20 +550,458 @@ def demo_round(rounds: int = 3) -> None:
 
 
 class mainScene(Scene):
+    """Simple REMO scene that visualises the strategy prototype."""
+
+    LOG_LIMIT = 12
+
     def initOnce(self):
         self.state = GameState(recruit_sample_roster())
         self.director = MissionDirector(random.Random(1337))
         self.controller = GameController(self.state, self.director)
 
-        self.controller.start_round()
+        self.log_messages: List[str] = []
+        self.mission_cards: List[rectObj] = []
+        self.roster_cards: List[rectObj] = []
+        self.buttons: List[textButton] = []
+        self.drawables: List[graphicObj] = []
 
-        return
+        self.controller.start_round()
+        self._build_ui()
+        self._refresh_all()
+
     def init(self):
+        # Scene swap entry point (no-op for now)
         return
+
+    # ------------------------------------------------------------------
+    # UI setup helpers
+    # ------------------------------------------------------------------
+    def _build_ui(self) -> None:
+        screen_w, screen_h = Rs.screen_size
+        base_color = Cs.hexColor("101421")
+
+        self.background = rectObj(
+            pygame.Rect(0, 0, screen_w, screen_h), radius=0, color=base_color
+        )
+
+        self.title = textObj(
+            "마법소녀 관할국",
+            pos=RPoint(70, 40),
+            font="unifont_script.ttf",
+            size=56,
+            color=Cs.white,
+        )
+
+        self.resource_panel = rectObj(
+            pygame.Rect(60, 120, 820, 180),
+            radius=26,
+            color=Cs.hexColor("1c2336"),
+        )
+        self.round_text = textObj(
+            "",
+            pos=RPoint(32, 30),
+            font="unifont_script.ttf",
+            size=42,
+            color=Cs.white,
+        )
+        self.round_text.setParent(self.resource_panel)
+        self.resource_text = longTextObj(
+            "",
+            pos=RPoint(32, 100),
+            font="unifont_script.ttf",
+            size=28,
+            color=Cs.grey75,
+            textWidth=760,
+        )
+        self.resource_text.setParent(self.resource_panel)
+
+        self.mission_header = textObj(
+            "",
+            pos=RPoint(60, 330),
+            font="unifont_script.ttf",
+            size=38,
+            color=Cs.white,
+        )
+        self.mission_layout = layoutObj(
+            pygame.Rect(60, 380, 960, 0),
+            spacing=18,
+            childs=[],
+            isVertical=True,
+        )
+
+        self.roster_header = textObj(
+            "",
+            pos=RPoint(1120, 120),
+            font="unifont_script.ttf",
+            size=38,
+            color=Cs.white,
+        )
+        self.roster_layout = layoutObj(
+            pygame.Rect(1120, 170, 620, 0),
+            spacing=14,
+            childs=[],
+            isVertical=True,
+        )
+
+        self.actions_panel = rectObj(
+            pygame.Rect(1800, 120, 640, 400),
+            radius=26,
+            color=Cs.hexColor("1c2336"),
+        )
+        self.actions_title = textObj(
+            "작전 지시",
+            pos=RPoint(32, 28),
+            font="unifont_script.ttf",
+            size=34,
+            color=Cs.white,
+        )
+        self.actions_title.setParent(self.actions_panel)
+
+        button_specs = [
+            ("자동 배치", self._auto_assign_and_resolve),
+            ("라운드 종료", self._end_round_and_refresh),
+            ("마력석 소환", self._perform_gacha),
+            ("시설 투자", self._invest_in_facility),
+        ]
+
+        self.button_layout = layoutObj(
+            pygame.Rect(0, 0, 0, 0), spacing=20, childs=[], isVertical=True
+        )
+        self.button_layout.pos = RPoint(32, 90)
+        self.button_layout.setParent(self.actions_panel)
+
+        for label, callback in button_specs:
+            button = textButton(
+                label,
+                pygame.Rect(0, 0, 520, 72),
+                radius=18,
+                color=Cs.hexColor("28324a"),
+                textColor=Cs.white,
+            )
+            button.setParent(self.button_layout)
+            button.connect(callback)
+            self.buttons.append(button)
+
+        self.facility_status = longTextObj(
+            "",
+            pos=RPoint(32, 320),
+            font="unifont_script.ttf",
+            size=24,
+            color=Cs.grey75,
+            textWidth=560,
+        )
+        self.facility_status.setParent(self.actions_panel)
+
+        self.log_panel = rectObj(
+            pygame.Rect(60, 940, 2380, 380),
+            radius=26,
+            color=Cs.hexColor("151b2a"),
+        )
+        self.log_title = textObj(
+            "상황 로그",
+            pos=RPoint(32, 28),
+            font="unifont_script.ttf",
+            size=34,
+            color=Cs.white,
+        )
+        self.log_title.setParent(self.log_panel)
+        self.log_text = longTextObj(
+            "",
+            pos=RPoint(32, 96),
+            font="unifont_script.ttf",
+            size=26,
+            color=Cs.grey75,
+            textWidth=2300,
+        )
+        self.log_text.setParent(self.log_panel)
+
+        self.drawables = [
+            self.background,
+            self.resource_panel,
+            self.mission_layout,
+            self.roster_layout,
+            self.actions_panel,
+            self.log_panel,
+            self.title,
+            self.mission_header,
+            self.roster_header,
+        ]
+
+    def _refresh_all(self) -> None:
+        self._refresh_resources()
+        self._refresh_missions()
+        self._refresh_roster()
+        self._refresh_facility_status()
+
+    def _refresh_resources(self) -> None:
+        res = self.state.resources
+        self.round_text.text = f"라운드 {self.state.round}"
+        self.resource_text.text = (
+            f"마력석 {res.mana_stones}개  |  연구데이터 {res.research_data}점\n"
+            f"위협도 {res.threat_level}  |  도시 안정도 {res.city_safety}"
+        )
+        gacha_button, facility_button = self.buttons[2], self.buttons[3]
+        if res.mana_stones >= 5:
+            gacha_button.enabled = True
+            gacha_button.showChilds(0)
+        else:
+            gacha_button.enabled = False
+            gacha_button.hideChilds(0)
+
+        if self.state.facility_manager.available_upgrades():
+            facility_button.enabled = True
+            facility_button.showChilds(0)
+        else:
+            facility_button.enabled = False
+            facility_button.hideChilds(0)
+
+    def _refresh_missions(self) -> None:
+        for card in self.mission_cards:
+            card.setParent(None)
+        self.mission_cards.clear()
+
+        total = len(self.state.pending_missions)
+        urgent = sum(
+            1
+            for mission in self.state.pending_missions
+            if mission.mission_type
+            in {MissionType.GATE_SCOUT, MissionType.GATE_ASSAULT, MissionType.GATE_SEAL}
+        )
+        self.mission_header.text = f"대기 중 임무 {total}건 (게이트 {urgent}건)"
+
+        for mission in self.state.pending_missions:
+            card = self._create_mission_card(mission)
+            card.setParent(self.mission_layout)
+            self.mission_cards.append(card)
+
+    def _refresh_roster(self) -> None:
+        for card in self.roster_cards:
+            card.setParent(None)
+        self.roster_cards.clear()
+
+        self.roster_header.text = f"계약 소녀 {len(self.state.roster)}명"
+        for girl in sorted(self.state.roster, key=lambda g: g.codename):
+            card = self._create_roster_card(girl)
+            card.setParent(self.roster_layout)
+            self.roster_cards.append(card)
+
+    def _refresh_facility_status(self) -> None:
+        facilities = self.state.facility_manager.facilities
+        active = [facility.name for facility in facilities if facility.acquired]
+        if active:
+            summary = "가동 중 시설: " + ", ".join(active)
+        else:
+            summary = "가동 중 시설 없음"
+
+        upcoming = [facility for facility in facilities if not facility.acquired]
+        if upcoming:
+            next_name = upcoming[0].name
+            summary += f"\n다음 투자 후보: {next_name}"
+        else:
+            summary += "\n모든 시설을 해금했습니다!"
+        self.facility_status.text = summary
+
+    def _create_mission_card(self, mission: Mission) -> rectObj:
+        card = rectObj(
+            pygame.Rect(0, 0, 920, 180),
+            radius=22,
+            color=Cs.hexColor("1b2334"),
+        )
+        title = textObj(
+            f"{mission.name}",
+            pos=RPoint(28, 24),
+            font="unifont_script.ttf",
+            size=34,
+            color=Cs.white,
+        )
+        title.setParent(card)
+        subtitle = textObj(
+            f"유형: {mission.mission_type.value} | 위험도 +{mission.threat_delta_on_fail}",
+            pos=RPoint(28, 72),
+            font="unifont_script.ttf",
+            size=24,
+            color=Cs.grey75,
+        )
+        subtitle.setParent(card)
+        req_lines = [
+            f"{stat.value}: {value}"
+            for stat, value in mission.requirements.items()
+        ]
+        req_text = textObj(
+            " / ".join(req_lines),
+            pos=RPoint(28, 118),
+            font="unifont_script.ttf",
+            size=24,
+            color=Cs.grey75,
+        )
+        req_text.setParent(card)
+        reward_text = textObj(
+            self._format_rewards(mission.rewards),
+            pos=RPoint(28, 146),
+            font="unifont_script.ttf",
+            size=24,
+            color=Cs.tiffanyBlue,
+        )
+        reward_text.setParent(card)
+        return card
+
+    def _create_roster_card(self, girl: MagicalGirl) -> rectObj:
+        card = rectObj(
+            pygame.Rect(0, 0, 580, 150),
+            radius=20,
+            color=Cs.hexColor("1b2334"),
+        )
+        title = textObj(
+            f"{girl.name} ({girl.codename})", 
+            pos=RPoint(24, 20),
+            font="unifont_script.ttf",
+            size=30,
+            color=Cs.white,
+        )
+        title.setParent(card)
+
+        stats = (
+            f"힘 {girl.stats.get(Stat.FORCE, 0)}  |  마력 {girl.stats.get(Stat.WISDOM, 0)}  |  "
+            f"매력 {girl.stats.get(Stat.CHARISMA, 0)}  |  의지 {girl.stats.get(Stat.SPIRIT, 0)}"
+        )
+        stats_text = textObj(
+            stats,
+            pos=RPoint(24, 66),
+            font="unifont_script.ttf",
+            size=24,
+            color=Cs.grey75,
+        )
+        stats_text.setParent(card)
+
+        status = (
+            f"레벨 {girl.level}  |  피로 {girl.fatigue}  |  사기 {girl.morale}  |  유대 {girl.bonds}"
+        )
+        status_text = textObj(
+            status,
+            pos=RPoint(24, 104),
+            font="unifont_script.ttf",
+            size=24,
+            color=Cs.grey75,
+        )
+        status_text.setParent(card)
+
+        if girl.awakened:
+            awakened_text = textObj(
+                "각성 완료",
+                pos=RPoint(24, 124),
+                font="unifont_script.ttf",
+                size=22,
+                color=Cs.tiffanyBlue,
+            )
+            awakened_text.setParent(card)
+        return card
+
+    # ------------------------------------------------------------------
+    # Button callbacks
+    # ------------------------------------------------------------------
+    def _auto_assign_and_resolve(self) -> None:
+        if not self.state.pending_missions:
+            self._append_log("남은 임무가 없습니다.")
+            return
+
+        assignments = self.controller.auto_assign()
+        if not assignments:
+            self._append_log("투입 가능한 팀이 없습니다!")
+            return
+
+        resolved = []
+        for assignment in assignments:
+            result = self.controller.resolve_assignment(assignment)
+            resolved.append(assignment.mission)
+            members = ", ".join(girl.codename for girl in assignment.team)
+            if result.success:
+                reward_summary = self._format_rewards(result.rewards)
+                self._append_log(
+                    f"{assignment.mission.name} 성공! 팀[{members}] 보상: {reward_summary}"
+                )
+            else:
+                self._append_log(
+                    f"{assignment.mission.name} 실패... 위협도 +{result.threat_change}"
+                )
+
+        self.state.pending_missions = [
+            mission
+            for mission in self.state.pending_missions
+            if mission not in resolved
+        ]
+
+        self._refresh_resources()
+        self._refresh_missions()
+        self._refresh_roster()
+
+    def _end_round_and_refresh(self) -> None:
+        self.controller.end_round()
+        self.controller.start_round()
+        self._append_log(f"라운드 {self.state.round} 시작! 새로운 임무가 도착했습니다.")
+        self._refresh_all()
+
+    def _perform_gacha(self) -> None:
+        recruit = self.controller.perform_gacha(mana_cost=5)
+        if recruit:
+            self._append_log(
+                f"{recruit.name}({recruit.codename}) 영입! 희귀도 ★{recruit.rarity}"
+            )
+            self._refresh_roster()
+        else:
+            self._append_log("마력석이 부족해 소환에 실패했습니다.")
+        self._refresh_resources()
+
+    def _invest_in_facility(self) -> None:
+        available = self.state.facility_manager.available_upgrades()
+        if not available:
+            self._append_log("모든 시설을 이미 확보했습니다.")
+            return
+
+        facility = available[0]
+        if self.controller.invest_in_facility(facility):
+            self._append_log(f"{facility.name} 가동! 전력이 향상되었습니다.")
+            self._refresh_roster()
+            self._refresh_facility_status()
+        else:
+            self._append_log("자원이 부족해 시설을 건설할 수 없습니다.")
+        self._refresh_resources()
+
+    # ------------------------------------------------------------------
+    # Utility helpers
+    # ------------------------------------------------------------------
+    def _format_rewards(self, rewards: Dict[str, int]) -> str:
+        if not rewards:
+            return "보상 없음"
+        parts = []
+        for key, value in rewards.items():
+            label = {
+                "mana_stones": "마력석",
+                "research_data": "연구데이터",
+                "city_safety": "도시 안정도",
+            }.get(key, key)
+            parts.append(f"{label} +{value}")
+        return ", ".join(parts)
+
+    def _append_log(self, message: str) -> None:
+        self.log_messages.append(message)
+        self.log_messages = self.log_messages[-self.LOG_LIMIT :]
+        self.log_text.text = "\n".join(self.log_messages)
+
+    # ------------------------------------------------------------------
+    # Scene loop
+    # ------------------------------------------------------------------
     def update(self):
-        return
+        for button in self.buttons:
+            button.update()
+        self.button_layout.update()
+        self.mission_layout.update()
+        self.roster_layout.update()
+
     def draw(self):
-        return
+        for drawable in self.drawables:
+            drawable.draw()
+        for button in self.buttons:
+            button.draw()
 
 
 class defaultScene(Scene):

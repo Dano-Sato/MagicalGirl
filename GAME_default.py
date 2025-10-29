@@ -1,31 +1,27 @@
-from REMOLib import *
-from dataclasses import dataclass
-import pygame
-import json
-import os
-
-from typing import Dict, Iterable, List, Optional, Sequence
-
-
-import enum
-import random
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence
-
-
-"""Skeleton code for a contract-driven magical girl agency simulation.
-
-This module sketches the core data structures and game loop needed for a
-turn-based management game where the player recruits magical girls through
-contracts (gacha) and sends them on missions to protect the city.
-"""
-
 from __future__ import annotations
 
+"""Prototype scaffolding for a contract-driven magical girl agency sim.
+
+The goal of this module is to provide a pure-Python gameplay core that can be
+hooked into either a command line interface or a graphical layer later.  The
+focus is on:
+
+* Recruit & train magical girls through a gacha style system.
+* Generate 3~5 missions every round and dispatch teams while managing fatigue.
+* Earn resources (mana stones & research data) to further strengthen the
+  roster, invest in facilities, and keep the city's threat level under
+  control.
+
+The rendering layer (``REMOGame``) is intentionally left untouched so that the
+logic can be iterated on quickly before wiring the UI.
+"""
+
 import enum
 import random
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from REMOLib import *
 
 
 class Stat(enum.Enum):
@@ -57,6 +53,7 @@ class MagicalGirl:
     morale: int = 100
     level: int = 1
     bonds: int = 0
+    awakened: bool = False
 
     def effective_stat(self, stat: Stat) -> int:
         """Return the current effective stat value including fatigue penalties."""
@@ -108,6 +105,14 @@ class MagicalGirl:
         self.stats[Stat.FORCE] += 1
         self.stats[Stat.WISDOM] += 1
 
+    def awaken(self) -> None:
+        """One-off upgrade triggered by certain facilities or events."""
+
+        if not self.awakened:
+            for stat in (Stat.FORCE, Stat.WISDOM, Stat.CHARISMA):
+                self.stats[stat] = int(self.stats.get(stat, 0) * 1.15) + 1
+            self.awakened = True
+
 
 class MissionType(enum.Enum):
     """Mission categories with different failure penalties."""
@@ -153,6 +158,13 @@ class AgencyResources:
         self.threat_level += amount
         self.city_safety = max(0, self.city_safety - amount // 2)
 
+    def spend(self, mana: int = 0, research: int = 0) -> bool:
+        if self.mana_stones < mana or self.research_data < research:
+            return False
+        self.mana_stones -= mana
+        self.research_data -= research
+        return True
+
 
 @dataclass
 class MissionAssignment:
@@ -177,6 +189,64 @@ class MissionResult:
     rewards: Dict[str, int]
 
 
+@dataclass
+class Facility:
+    """Simple representation of a base upgrade unlocked with research."""
+
+    name: str
+    research_cost: int
+    upkeep_mana: int
+    effect: Callable[[GameState], None]
+    acquired: bool = False
+
+
+class FacilityManager:
+    """Tracks which facilities are available and unlocked."""
+
+    def __init__(self, facilities: Iterable[Facility]):
+        self.facilities: List[Facility] = list(facilities)
+
+    def available_upgrades(self) -> List[Facility]:
+        return [facility for facility in self.facilities if not facility.acquired]
+
+    def purchase(self, facility: Facility, state: GameState) -> bool:
+        if facility.acquired:
+            return False
+        if not state.resources.spend(mana=facility.upkeep_mana, research=facility.research_cost):
+            return False
+        facility.acquired = True
+        facility.effect(state)
+        return True
+
+
+class GachaPool:
+    """Very small helper that consumes mana stones to recruit girls."""
+
+    def __init__(self, banner: Sequence[Tuple[MagicalGirl, float]]):
+        total = sum(weight for _, weight in banner)
+        self.banner: List[Tuple[MagicalGirl, float]] = [
+            (girl, weight / total) for girl, weight in banner
+        ]
+
+    def pull(self, rng: random.Random, mana_cost: int, resources: AgencyResources) -> Optional[MagicalGirl]:
+        if not resources.spend(mana=mana_cost):
+            return None
+        roll = rng.random()
+        cumulative = 0.0
+        for template, weight in self.banner:
+            cumulative += weight
+            if roll <= cumulative:
+                # Return a lightweight copy so training does not mutate the template.
+                return MagicalGirl(
+                    name=template.name,
+                    codename=template.codename,
+                    stats=dict(template.stats),
+                    rarity=template.rarity,
+                    level=template.level,
+                )
+        return None
+
+
 class GameState:
     """Lightweight container for the current run."""
 
@@ -185,11 +255,16 @@ class GameState:
         self.roster: List[MagicalGirl] = list(roster)
         self.resources = AgencyResources(mana_stones=10, research_data=0)
         self.pending_missions: List[Mission] = []
+        self.facility_manager = FacilityManager(create_default_facilities())
+        self.gacha_pool = GachaPool(create_default_banner())
 
     def advance_round(self) -> None:
         self.round += 1
         for girl in self.roster:
             girl.rest()
+        # passive threat decay to reward proactive play
+        if self.resources.threat_level > 0:
+            self.resources.threat_level = max(0, self.resources.threat_level - 2)
 
 
 class MissionDirector:
@@ -216,6 +291,9 @@ class MissionDirector:
             }
             if mission_type is MissionType.PUBLIC_RELATIONS:
                 rewards["city_safety"] = 5
+            if mission_type in {MissionType.GATE_SCOUT, MissionType.GATE_ASSAULT, MissionType.GATE_SEAL}:
+                requirements[Stat.FORCE] += 2
+                requirements[Stat.SPIRIT] += 3
             name = f"{mission_type.value} Lv.{base_diff}"
             missions.append(
                 Mission(
@@ -272,8 +350,6 @@ class GameController:
 
     def assign_team(self, mission: Mission, team: Iterable[MagicalGirl]) -> MissionAssignment:
         assignment = MissionAssignment(mission=mission, team=list(team))
-        for girl in assignment.team:
-            girl.apply_mission_fatigue(mission.difficulty * 5)
         return assignment
 
     def resolve_assignment(self, assignment: MissionAssignment) -> MissionResult:
@@ -297,6 +373,107 @@ class GameController:
             self.state.resources.escalate_threat(mission.threat_delta_on_fail)
         self.state.pending_missions.clear()
         self.state.advance_round()
+
+    # --- Agency actions -------------------------------------------------
+
+    def rest_unassigned(self, assigned: Iterable[MagicalGirl]) -> None:
+        assigned_ids = {id(girl) for girl in assigned}
+        for girl in self.state.roster:
+            if id(girl) not in assigned_ids:
+                girl.rest()
+
+    def invest_in_facility(self, facility: Facility) -> bool:
+        return self.state.facility_manager.purchase(facility, self.state)
+
+    def perform_gacha(self, mana_cost: int = 5) -> Optional[MagicalGirl]:
+        recruit = self.state.gacha_pool.pull(self.director.rng, mana_cost, self.state.resources)
+        if recruit:
+            self.state.roster.append(recruit)
+        return recruit
+
+    def auto_assign(self) -> List[MissionAssignment]:
+        assignments: List[MissionAssignment] = []
+        available_girls = sorted(self.state.roster, key=lambda g: g.fatigue)
+        for mission in self.state.pending_missions:
+            needed = 2 if mission.difficulty <= 2 else 3
+            team: List[MagicalGirl] = []
+            pool = [girl for girl in available_girls if girl.fatigue < 90]
+            pool.sort(key=lambda girl: girl.effective_stat(mission.primary_requirement()), reverse=True)
+            for girl in pool[:needed]:
+                team.append(girl)
+                available_girls.remove(girl)
+            if team:
+                assignments.append(MissionAssignment(mission, team))
+        return assignments
+
+
+def create_default_banner() -> List[Tuple[MagicalGirl, float]]:
+    return [
+        (
+            MagicalGirl(
+                name="폭풍의 유나",
+                codename="Tempest",
+                stats={
+                    Stat.FORCE: 15,
+                    Stat.WISDOM: 10,
+                    Stat.CHARISMA: 9,
+                    Stat.SPIRIT: 12,
+                },
+                rarity=4,
+            ),
+            1.0,
+        ),
+        (
+            MagicalGirl(
+                name="은빛의 리에",
+                codename="Lierre",
+                stats={
+                    Stat.FORCE: 11,
+                    Stat.WISDOM: 15,
+                    Stat.CHARISMA: 11,
+                    Stat.SPIRIT: 13,
+                },
+                rarity=5,
+            ),
+            0.6,
+        ),
+        (
+            MagicalGirl(
+                name="무대의 소라",
+                codename="Stage",
+                stats={
+                    Stat.FORCE: 9,
+                    Stat.WISDOM: 10,
+                    Stat.CHARISMA: 17,
+                    Stat.SPIRIT: 11,
+                },
+                rarity=3,
+            ),
+            1.4,
+        ),
+    ]
+
+
+def create_default_facilities() -> List[Facility]:
+    def training_hall(state: GameState) -> None:
+        for girl in state.roster:
+            girl.stats[Stat.FORCE] += 1
+            girl.stats[Stat.SPIRIT] += 1
+
+    def meditation_garden(state: GameState) -> None:
+        for girl in state.roster:
+            girl.morale = min(120, girl.morale + 10)
+
+    def arcane_laboratory(state: GameState) -> None:
+        for girl in state.roster:
+            if girl.rarity >= 4:
+                girl.awaken()
+
+    return [
+        Facility("전술 훈련장", research_cost=5, upkeep_mana=2, effect=training_hall),
+        Facility("명상의 정원", research_cost=6, upkeep_mana=1, effect=meditation_garden),
+        Facility("비전 실험실", research_cost=12, upkeep_mana=3, effect=arcane_laboratory),
+    ]
 
 
 def recruit_sample_roster() -> List[MagicalGirl]:
@@ -337,34 +514,47 @@ def recruit_sample_roster() -> List[MagicalGirl]:
     ]
 
 
-def demo_round() -> None:
-    """Run a text-based demo round to validate the skeleton flow."""
+def demo_round(rounds: int = 3) -> None:
+    """Run a small auto-play session to validate the prototype flow."""
 
     state = GameState(recruit_sample_roster())
     director = MissionDirector(random.Random(1337))
     controller = GameController(state, director)
 
-    controller.start_round()
-    print(f"Round {state.round} Missions:")
-    for index, mission in enumerate(state.pending_missions, start=1):
-        print(f"  {index}. {mission.name} -> requires {mission.requirements}")
-
-    if state.pending_missions:
-        assignment = controller.assign_team(
-            state.pending_missions[0],
-            team=state.roster[:2],
+    for _ in range(rounds):
+        controller.start_round()
+        print(f"\n==== Round {state.round} ====")
+        for mission in state.pending_missions:
+            print(
+                f"- {mission.name} [{mission.mission_type.value}] | diff {mission.difficulty} | "
+                f"threat fail +{mission.threat_delta_on_fail}"
+            )
+        assignments = controller.auto_assign()
+        for assignment in assignments:
+            result = controller.resolve_assignment(assignment)
+            members = ", ".join(girl.codename for girl in assignment.team)
+            print(
+                f"Mission '{assignment.mission.name}' by [{members}] -> "
+                f"{'SUCCESS' if result.success else 'FAIL'}"
+            )
+        if not assignments:
+            print("No suitable team could be formed this round!")
+        controller.end_round()
+        print(
+            f"Resources: mana={state.resources.mana_stones}, research={state.resources.research_data}, "
+            f"threat={state.resources.threat_level}, city={state.resources.city_safety}"
         )
-        result = controller.resolve_assignment(assignment)
-        print(f"\nMission result: {'SUCCESS' if result.success else 'FAILURE'}")
-        print(f"Resources: {state.resources}")
-
-    controller.end_round()
-    print(f"Threat level after round {state.round}: {state.resources.threat_level}")
 
 
 
 class mainScene(Scene):
     def initOnce(self):
+        self.state = GameState(recruit_sample_roster())
+        self.director = MissionDirector(random.Random(1337))
+        self.controller = GameController(self.state, self.director)
+
+        self.controller.start_round()
+
         return
     def init(self):
         return
@@ -389,6 +579,9 @@ class Scenes:
 
 
 if __name__=="__main__":
+    # Quick smoke test of the backend logic when run directly.
+    demo_round(rounds=2)
+
     #Screen Setting
     window = REMOGame(window_resolution=(1920,1080),screen_size=(2560,1440),fullscreen=False,caption="DEFAULT")
     window.setCurrentScene(Scenes.mainScene)
